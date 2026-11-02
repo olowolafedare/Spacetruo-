@@ -29,7 +29,7 @@ export default function XedruoIdentityGate({companySlug,children}) {
       setIdentity(existing||null);
       setCountries(countryRows||[]);
       if(existing?.country_code) setCountryCode(String(existing.country_code).trim());
-      if(existing?.phone_e164) setPhone(String(existing.phone_e164));
+      if(existing?.phone_e164) { const dial=String((countryRows||[]).find(x=>String(x.country_code).trim()===String(existing.country_code).trim())?.calling_code||"").trim(); const stored=String(existing.phone_e164); setPhone(dial&&stored.startsWith(dial)?stored.slice(dial.length):stored); }
       if(existing?.xedruo_id && existing?.phone_e164) {
         const {error:profileError}=await supabase.rpc("ensure_xedruo_company_profile",{
           p_company_slug:companySlug,
