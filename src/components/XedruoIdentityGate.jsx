@@ -14,6 +14,9 @@ export default function XedruoIdentityGate({companySlug,children}) {
   const [countryCode,setCountryCode]=useState("");
   const [countrySearch,setCountrySearch]=useState("");
   const [phone,setPhone]=useState("");
+  const [pendingPhone,setPendingPhone]=useState("");
+  const [otp,setOtp]=useState("");
+  const [step,setStep]=useState("phone");
   const [error,setError]=useState("");
   const [busy,setBusy]=useState(false);
   const [complete,setComplete]=useState(false);
@@ -26,7 +29,7 @@ export default function XedruoIdentityGate({companySlug,children}) {
       setUser(current||null);
       if(!current){setIdentity(null);setComplete(false);return;}
       const [{data:existing,error:identityError},{data:countryRows,error:countryError}]=await Promise.all([
-        supabase.from("xedruo_identity").select("xedruo_id,country_code,phone_e164").eq("user_id",current.id).maybeSingle(),
+        supabase.from("xedruo_identity").select("xedruo_id,country_code,phone_e164,phone_verified_at").eq("user_id",current.id).maybeSingle(),
         supabase.from("xedruo_country_calling_codes").select("country_code,calling_code").order("country_code")
       ]);
       if(identityError) throw identityError;
@@ -35,7 +38,7 @@ export default function XedruoIdentityGate({companySlug,children}) {
       setCountries(countryRows||[]);
       if(existing?.country_code) setCountryCode(String(existing.country_code).trim());
       if(existing?.phone_e164) { const dial=String((countryRows||[]).find(x=>String(x.country_code).trim()===String(existing.country_code).trim())?.calling_code||"").trim(); const stored=String(existing.phone_e164); setPhone(dial&&stored.startsWith(dial)?stored.slice(dial.length):stored); }
-      if(existing?.xedruo_id && existing?.phone_e164) {
+      if(existing?.xedruo_id && existing?.phone_e164 && existing?.phone_verified_at) {
         const {error:profileError}=await supabase.rpc("ensure_xedruo_company_profile",{
           p_company_slug:companySlug,
           p_display_name:current.user_metadata?.full_name||current.user_metadata?.name||current.email||null
@@ -64,8 +67,11 @@ export default function XedruoIdentityGate({companySlug,children}) {
       if(!selected) throw new Error("Select your issuing country.");
       const country=countries.find(x=>String(x.country_code).trim()===selected);
       if(!country) throw new Error("The selected country calling code is unavailable. Refresh and try again.");
-      const digits=phone.replace(/\D/g,"");
+      let digits=phone.replace(/\D/g,"");
       const dial=String(country.calling_code||"").trim();
+      const dialDigits=dial.replace(/\D/g,"");
+      if(dialDigits&&digits.startsWith(dialDigits))digits=digits.slice(dialDigits.length);
+      digits=digits.replace(/^0/,"");
       const e164=dial+digits;
       if(!/^\+[1-9]\d{7,14}$/.test(e164)) throw new Error("Enter a valid phone number with the selected country's calling code.");
       if(!identity?.xedruo_id) {
@@ -76,14 +82,29 @@ export default function XedruoIdentityGate({companySlug,children}) {
       }
       const {error:phoneError}=await supabase.rpc("set_xedruo_identity_phone",{p_country_code:selected,p_phone_e164:e164});
       if(phoneError) throw phoneError;
-      const {error:profileError}=await supabase.rpc("ensure_xedruo_company_profile",{
-        p_company_slug:companySlug,
-        p_display_name:current.user_metadata?.full_name||current.user_metadata?.name||current.email||null
-      });
-      if(profileError) throw profileError;
-      await load();
+      const {error:smsError}=await supabase.auth.updateUser({phone:e164});
+      if(smsError) throw smsError;
+      setPendingPhone(e164);
+      setOtp("");
+      setStep("otp");
     } catch(e) { setError(e?.message||"Xedruo identity setup failed."); }
     finally { setBusy(false); }
+  }
+
+  async function verifyPhone() {
+    if(otp.length!==6){setError("Enter the 6-digit verification code.");return;}
+    setBusy(true);setError("");
+    try{
+      const {error:verifyError}=await supabase.auth.verifyOtp({phone:pendingPhone,token:otp,type:"phone_change"});
+      if(verifyError)throw verifyError;
+      const {error:phoneError}=await supabase.rpc("set_xedruo_identity_phone",{p_country_code:countryCode,p_phone_e164:pendingPhone});
+      if(phoneError)throw phoneError;
+      const {data:{user:current}}=await supabase.auth.getUser();
+      const {error:profileError}=await supabase.rpc("ensure_xedruo_company_profile",{p_company_slug:companySlug,p_display_name:current?.user_metadata?.full_name||current?.user_metadata?.name||current?.email||null});
+      if(profileError)throw profileError;
+      await load();
+    }catch(e){setError(e?.message||"Phone verification failed.");}
+    finally{setBusy(false);}
   }
 
   async function connectGoogle() {
@@ -102,5 +123,6 @@ export default function XedruoIdentityGate({companySlug,children}) {
   const selectedCountry=countries.find(c=>String(c.country_code).trim()===countryCode);
   const selectedCallingCode=String(selectedCountry?.calling_code||"").trim();
   if(!googleConnected) return <main className="min-h-screen grid place-items-center bg-background px-5 text-foreground"><section className="w-full max-w-md rounded-2xl border bg-card p-7"><h1 className="text-2xl font-black">Connect your Google account</h1><p className="mt-2 text-sm text-muted-foreground">Xedruo requires Google authentication together with your phone number. Connect Google to this existing account to continue.</p>{error&&<p role="alert" className="mt-4 text-sm text-red-600">{error}</p>}<button disabled={busy} onClick={connectGoogle} className="mt-5 w-full rounded-xl bg-primary px-5 py-3 font-semibold text-primary-foreground disabled:opacity-60">{busy?"Connecting…":"Connect Google account"}</button></section></main>;
-  return <main className="min-h-screen grid place-items-center bg-background px-5 py-10 text-foreground"><section className="w-full max-w-lg rounded-2xl border bg-card p-7 shadow-sm"><div className="text-xs font-bold uppercase tracking-[.2em] text-primary">Unified Xedruo identity</div><h1 className="mt-3 text-2xl font-black">Complete your Xedruo ID</h1><p className="mt-2 text-sm text-muted-foreground">Your Google account is connected. Select your issuing country and add your phone number to activate this company workspace. Your Xedruo ID is shared across the ecosystem.</p>{identity?.xedruo_id&&<div className="mt-5 rounded-xl border bg-muted/40 p-4"><div className="text-xs text-muted-foreground">Your Xedruo ID</div><div className="mt-1 font-bold">{identity.xedruo_id}</div><div className="mt-1 text-xs text-muted-foreground">Issuing country: {String(identity.country_code||"").trim()}</div></div>}{error&&<div role="alert" className="mt-5 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">{error}</div>}<form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-semibold">Country selection<input type="search" value={countrySearch} onChange={e=>setCountrySearch(e.target.value)} placeholder="Search country…" disabled={Boolean(identity?.country_code)} className="mt-2 w-full rounded-xl border bg-background px-3 py-3"/><select disabled={Boolean(identity?.country_code)} required value={countryCode} onChange={e=>setCountryCode(e.target.value)} className="mt-2 w-full rounded-xl border bg-background px-3 py-3"><option value="">Select country</option>{filteredCountries.map(c=><option key={c.country_code} value={String(c.country_code).trim()}>{countryFlag(c.country_code)} {countryName(c.country_code)}</option>)}</select></label><label className="block text-sm font-semibold">Country calling code<input readOnly value={selectedCallingCode} placeholder="Selected automatically" className="mt-2 w-full rounded-xl border bg-muted px-3 py-3" /></label><label className="block text-sm font-semibold">Phone number<input required type="tel" inputMode="tel" autoComplete="tel-national" value={phone} onChange={e=>setPhone(e.target.value.replace(/[^0-9\s()-]/g,""))} placeholder="Enter your number" className="mt-2 w-full rounded-xl border bg-background px-3 py-3" /></label><p className="text-xs text-muted-foreground">The selected country's calling code is added automatically. SMS verification can be completed when the phone OTP rollout is enabled.</p><button disabled={busy||!countries.length} className="w-full rounded-xl bg-primary px-5 py-3 font-bold text-primary-foreground disabled:opacity-60">{busy?"Saving your Xedruo identity…":"Save and continue"}</button></form></section></main>;
+  if(step==="otp") return <main className="min-h-screen grid place-items-center bg-background px-5 text-foreground"><section className="w-full max-w-md rounded-2xl border bg-card p-7"><h1 className="text-2xl font-black">Verify your phone number</h1><p className="mt-2 text-sm text-muted-foreground">Enter the 6-digit SMS code sent to {pendingPhone}.</p>{error&&<p role="alert" className="mt-4 text-sm text-red-600">{error}</p>}<input inputMode="numeric" maxLength={6} value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g,"").slice(0,6))} placeholder="000000" className="mt-5 w-full rounded-xl border bg-background px-4 py-3 text-center text-xl tracking-[.4em]"/><button disabled={busy||otp.length!==6} onClick={verifyPhone} className="mt-4 w-full rounded-xl bg-primary px-5 py-3 font-semibold text-primary-foreground">{busy?"Verifying…":"Verify and continue"}</button><button disabled={busy} onClick={()=>setStep("phone")} className="mt-4 w-full text-sm text-primary">Change phone number</button></section></main>;
+  return <main className="min-h-screen grid place-items-center bg-background px-5 py-10 text-foreground"><section className="w-full max-w-lg rounded-2xl border bg-card p-7 shadow-sm"><div className="text-xs font-bold uppercase tracking-[.2em] text-primary">Unified Xedruo identity</div><h1 className="mt-3 text-2xl font-black">Complete your Xedruo ID</h1><p className="mt-2 text-sm text-muted-foreground">Your Google account is connected. Select your issuing country and add your phone number to activate this company workspace. Your Xedruo ID is shared across the ecosystem.</p>{identity?.xedruo_id&&<div className="mt-5 rounded-xl border bg-muted/40 p-4"><div className="text-xs text-muted-foreground">Your Xedruo ID</div><div className="mt-1 font-bold">{identity.xedruo_id}</div><div className="mt-1 text-xs text-muted-foreground">Issuing country: {String(identity.country_code||"").trim()}</div></div>}{error&&<div role="alert" className="mt-5 rounded-xl border border-red-300 bg-red-50 p-3 text-sm text-red-800">{error}</div>}<form onSubmit={submit} className="mt-5 space-y-4"><label className="block text-sm font-semibold">Country selection<input type="search" value={countrySearch} onChange={e=>setCountrySearch(e.target.value)} placeholder="Search country…" disabled={Boolean(identity?.country_code)} className="mt-2 w-full rounded-xl border bg-background px-3 py-3"/><select disabled={Boolean(identity?.country_code)} required value={countryCode} onChange={e=>setCountryCode(e.target.value)} className="mt-2 w-full rounded-xl border bg-background px-3 py-3"><option value="">Select country</option>{filteredCountries.map(c=><option key={c.country_code} value={String(c.country_code).trim()}>{countryFlag(c.country_code)} {countryName(c.country_code)}</option>)}</select></label><label className="block text-sm font-semibold">Country calling code<input readOnly value={selectedCallingCode} placeholder="Selected automatically" className="mt-2 w-full rounded-xl border bg-muted px-3 py-3" /></label><label className="block text-sm font-semibold">Phone number<input required type="tel" inputMode="tel" autoComplete="tel-national" value={phone} onChange={e=>setPhone(e.target.value.replace(/[^0-9\s()-]/g,""))} placeholder="Enter your number" className="mt-2 w-full rounded-xl border bg-background px-3 py-3" /></label><p className="text-xs text-muted-foreground">The selected country's calling code is added automatically. We will send an SMS verification code before activating your shared Xedruo ID.</p><button disabled={busy||!countries.length} className="w-full rounded-xl bg-primary px-5 py-3 font-bold text-primary-foreground disabled:opacity-60">{busy?"Saving your Xedruo identity…":"Save and continue"}</button></form></section></main>;
 }
