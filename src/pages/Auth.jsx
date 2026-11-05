@@ -33,7 +33,7 @@ export default function Auth({mode='login'}){
   <h1 className="text-2xl font-black">{register?'Create your Xedruo account':'Welcome to '+"SpaceTruo"}</h1>
   <p className="mt-2 text-sm text-muted-foreground">{register?'Create your shared Xedruo account with Google, then add your country and phone number.':'Sign in with Google or your Xedruo ID and password. Your session stays inside this company app.'}</p>
   {error&&<div role="alert" className="mt-4 rounded-xl border border-red-300 p-3 text-sm text-red-700">{error}</div>}
-  <button type="button" onClick={google} disabled={busy} className="mt-5 w-full rounded-xl border border-border px-4 py-3 font-semibold disabled:opacity-60">{busy?'Connecting…':'Continue with Google'}</button>
+  <button type="button" onClick={google} disabled={busy} className="mt-5 w-full rounded-xl border border-border px-4 py-3 font-semibold disabled:opacity-60">{busy?'Connecting…':register?'Create account with Google':'Continue with Google'}</button>
   {!register&&<><div className="my-5 flex items-center gap-3 text-xs text-muted-foreground"><span className="h-px flex-1 bg-border"/><span>OR SIGN IN WITH XEDRUO ID</span><span className="h-px flex-1 bg-border"/></div>
    <form onSubmit={signInWithId} className="space-y-3">
     <label className="block text-sm font-semibold">Xedruo ID<input required value={xedruoId} onChange={e=>setXedruoId(e.target.value.toUpperCase())} placeholder="NG-1234567890" autoComplete="username" className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3"/></label>
