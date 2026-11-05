@@ -1,6 +1,7 @@
 import React,{useState} from 'react';
 import {Link,useNavigate} from 'react-router-dom';
 import {supabase} from '@/api/xedruoClient';
+import {signInWithXedruoId,signInWithGoogle} from '@/lib/xedruoIdentityBridge';
 
 export default function Auth({mode='login'}){
  const nav=useNavigate();
@@ -13,18 +14,13 @@ export default function Auth({mode='login'}){
  async function google(){
   setBusy(true);setError('');
   try{
-   const {error:e}=await supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.origin+destination,queryParams:{prompt:'select_account'}}});
-   if(e)throw e;
+   await signInWithGoogle({supabase,companyOrigin:window.location.origin,returnPath:destination});
   }catch(e){setError(e?.message||'Google sign-in failed.');setBusy(false);}
  }
  async function signInWithId(event){
   event.preventDefault();setBusy(true);setError('');
   try{
-   const {data,error:e}=await supabase.functions.invoke('xedruo-id-login',{body:{xedruo_id:xedruoId.trim().toUpperCase(),password,company_slug:'spacetruo'}});
-   if(e)throw new Error(e.message||'Xedruo ID sign-in failed.');
-   if(!data?.access_token||!data?.refresh_token)throw new Error(data?.error||'Xedruo ID or password is incorrect.');
-   const {error:sessionError}=await supabase.auth.setSession({access_token:data.access_token,refresh_token:data.refresh_token});
-   if(sessionError)throw sessionError;
+   await signInWithXedruoId({supabase,xedruoId,password,companySlug:'spacetruo'});
    nav(destination,{replace:true});
   }catch(e){setError(e?.message||'Xedruo ID sign-in failed.');}
   finally{setBusy(false);}
