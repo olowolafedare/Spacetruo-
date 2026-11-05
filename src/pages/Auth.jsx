@@ -1,28 +1,46 @@
-import React,{useEffect,useState} from 'react';
+import React,{useState} from 'react';
 import {Link,useNavigate} from 'react-router-dom';
 import {supabase} from '@/api/xedruoClient';
 
-const regions=new Intl.DisplayNames(['en'],{type:'region'});
-const countryName=code=>regions.of(String(code||'').trim().toUpperCase())||String(code||'').trim().toUpperCase();
-const countryFlag=code=>[...String(code||'').trim().toUpperCase()].map(ch=>String.fromCodePoint(127397+ch.charCodeAt(0))).join('');
-
 export default function Auth({mode='login'}){
  const nav=useNavigate();
- const [countries,setCountries]=useState([]),[country,setCountry]=useState('NG'),[search,setSearch]=useState('');
- const [phone,setPhone]=useState(''),[otp,setOtp]=useState(''),[step,setStep]=useState('options');
- const [error,setError]=useState(''),[busy,setBusy]=useState(false);
- useEffect(()=>{let active=true;supabase.from('xedruo_country_calling_codes').select('country_code,calling_code').order('country_code').then(({data,error:e})=>{if(active){if(e)setError(e.message);else setCountries(data||[]);}});return()=>{active=false;};},[]);
- const callingCode=String(countries.find(c=>c.country_code.trim()===country)?.calling_code||'').trim();
- const fullPhone=callingCode+phone.replace(/\D/g,'').replace(/^0/,'');
- const filtered=countries.filter(c=>{const q=search.trim().toLowerCase();return !q||countryName(c.country_code).toLowerCase().includes(q)||c.country_code.toLowerCase().includes(q)||c.calling_code.includes(q);}).sort((a,b)=>countryName(a.country_code).localeCompare(countryName(b.country_code)));
- const google=async()=>{setBusy(true);setError('');try{const{error:e}=await supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.origin+(mode==='register'?'/dashboard':'/dashboard'),queryParams:{prompt:'select_account'}}});if(e)throw e;}catch(e){setError(e.message||'Google sign-in failed.');setBusy(false);}};
- const sendCode=async()=>{if(!/^\+[1-9]\d{7,14}$/.test(fullPhone)){setError('Select your country and enter a valid phone number.');return;}setBusy(true);setError('');try{const{error:e}=await supabase.auth.signInWithOtp({phone:fullPhone,options:{shouldCreateUser:false}});if(e)throw e;setStep('otp');}catch(e){setError(e.message||'Could not send phone verification code.');}finally{setBusy(false);}};
- const verify=async()=>{if(otp.length!==6){setError('Enter the 6-digit verification code.');return;}setBusy(true);setError('');try{const{error:e}=await supabase.auth.verifyOtp({phone:fullPhone,token:otp,type:'sms'});if(e)throw e;nav('/dashboard',{replace:true});}catch(e){setError(e.message||'Invalid or expired code.');}finally{setBusy(false);}};
  const register=mode==='register';
- return <main className="min-h-screen grid place-items-center px-5 py-12 bg-background text-foreground"><div className="w-full max-w-md rounded-2xl border border-border bg-card p-7"><h1 className="text-2xl font-black">{register?'Create your Xedruo account':'Welcome back'}</h1><p className="mt-2 text-sm text-muted-foreground">{register?'Continue with Google, then complete your shared Xedruo country and phone details.':'Continue with Google or verify the phone number already linked to your Xedruo account.'}</p>{error&&<div role="alert" className="mt-4 rounded-xl border border-red-300 p-3 text-sm text-red-700">{error}</div>}
- {step==='options'&&<><button onClick={google} disabled={busy} className="mt-5 w-full rounded-xl border border-border px-4 py-3 font-semibold disabled:opacity-60">Continue with Google</button>{!register&&<><div className="my-4 text-center text-xs text-muted-foreground">OR</div><button onClick={()=>setStep('phone')} disabled={busy} className="w-full rounded-xl border border-border px-4 py-3 font-semibold">Continue with phone number</button></>}</>}
- {step==='phone'&&<div className="mt-5 space-y-3"><label className="block text-sm font-semibold">Country selection<input type="search" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search country…" className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3"/><select value={country} onChange={e=>setCountry(e.target.value)} className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3"><option value="">Select country</option>{filtered.map(c=><option key={c.country_code} value={c.country_code.trim()}>{countryFlag(c.country_code)} {countryName(c.country_code)}</option>)}</select></label><label className="block text-sm font-semibold">Country calling code<input readOnly value={callingCode} className="mt-2 w-full rounded-xl border border-border bg-muted px-3 py-3"/></label><label className="block text-sm font-semibold">Phone number<input type="tel" inputMode="tel" value={phone} onChange={e=>setPhone(e.target.value.replace(/[^0-9\s()-]/g,''))} placeholder="Enter your phone number" className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3"/></label><button onClick={sendCode} disabled={busy||!phone.trim()} className="w-full rounded-xl bg-primary px-4 py-3 font-bold text-primary-foreground">{busy?'Sending…':'Send verification code'}</button></div>}
- {step==='otp'&&<div className="mt-5 space-y-3"><p className="text-sm text-muted-foreground">Enter the 6-digit code sent to {fullPhone}.</p><input inputMode="numeric" maxLength={6} value={otp} onChange={e=>setOtp(e.target.value.replace(/\D/g,'').slice(0,6))} className="w-full rounded-xl border border-border bg-background px-4 py-3 text-center text-xl tracking-[.4em]" placeholder="000000"/><button onClick={verify} disabled={busy||otp.length!==6} className="w-full rounded-xl bg-primary px-4 py-3 font-bold text-primary-foreground">{busy?'Verifying…':'Verify and continue'}</button></div>}
- <p className="mt-5 text-center text-sm">{register?<>Already registered? <Link className="font-bold underline" to="/login">Sign in</Link></>:<>New to Xedruo? <Link className="font-bold underline" to="/register">Create account</Link></>}</p>
- </div></main>;
+ const [xedruoId,setXedruoId]=useState('');
+ const [password,setPassword]=useState('');
+ const [error,setError]=useState('');
+ const [busy,setBusy]=useState(false);
+ const destination="/dashboard";
+ async function google(){
+  setBusy(true);setError('');
+  try{
+   const {error:e}=await supabase.auth.signInWithOAuth({provider:'google',options:{redirectTo:window.location.origin+destination,queryParams:{prompt:'select_account'}}});
+   if(e)throw e;
+  }catch(e){setError(e?.message||'Google sign-in failed.');setBusy(false);}
+ }
+ async function signInWithId(event){
+  event.preventDefault();setBusy(true);setError('');
+  try{
+   const {data,error:e}=await supabase.functions.invoke('xedruo-id-login',{body:{xedruo_id:xedruoId.trim().toUpperCase(),password}});
+   if(e)throw new Error(e.message||'Xedruo ID sign-in failed.');
+   if(!data?.access_token||!data?.refresh_token)throw new Error(data?.error||'Xedruo ID or password is incorrect.');
+   const {error:sessionError}=await supabase.auth.setSession({access_token:data.access_token,refresh_token:data.refresh_token});
+   if(sessionError)throw sessionError;
+   nav(destination,{replace:true});
+  }catch(e){setError(e?.message||'Xedruo ID sign-in failed.');}
+  finally{setBusy(false);}
+ }
+ return <main className="min-h-screen grid place-items-center px-5 py-12 bg-background text-foreground"><section className="w-full max-w-md rounded-2xl border border-border bg-card p-7">
+  <h1 className="text-2xl font-black">{register?'Create your Xedruo account':'Welcome to '+"SpaceTruo"}</h1>
+  <p className="mt-2 text-sm text-muted-foreground">{register?'Create your shared Xedruo account with Google, then add your country and phone number.':'Sign in with Google or your Xedruo ID and password. Your session stays inside this company app.'}</p>
+  {error&&<div role="alert" className="mt-4 rounded-xl border border-red-300 p-3 text-sm text-red-700">{error}</div>}
+  <button type="button" onClick={google} disabled={busy} className="mt-5 w-full rounded-xl border border-border px-4 py-3 font-semibold disabled:opacity-60">{busy?'Connecting…':'Continue with Google'}</button>
+  {!register&&<><div className="my-5 flex items-center gap-3 text-xs text-muted-foreground"><span className="h-px flex-1 bg-border"/><span>OR SIGN IN WITH XEDRUO ID</span><span className="h-px flex-1 bg-border"/></div>
+   <form onSubmit={signInWithId} className="space-y-3">
+    <label className="block text-sm font-semibold">Xedruo ID<input required value={xedruoId} onChange={e=>setXedruoId(e.target.value.toUpperCase())} placeholder="NG-1234567890" autoComplete="username" className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3"/></label>
+    <label className="block text-sm font-semibold">Password<input required type="password" value={password} onChange={e=>setPassword(e.target.value)} autoComplete="current-password" placeholder="Your password" className="mt-2 w-full rounded-xl border border-border bg-background px-3 py-3"/></label>
+    <button type="submit" disabled={busy||!xedruoId.trim()||!password} className="w-full rounded-xl bg-primary px-4 py-3 font-bold text-primary-foreground disabled:opacity-60">{busy?'Signing in…':'Sign in with Xedruo ID'}</button>
+   </form></>}
+  <p className="mt-5 text-center text-sm">{register?<>Already have an account? <Link className="underline" to="/login">Sign in</Link></>:<>New to Xedruo? <Link className="underline" to="/register">Create an account</Link></>}</p>
+  <p className="mt-4 text-xs leading-5 text-muted-foreground">Phone number is collected during Xedruo identity onboarding. SMS verification is not required.</p>
+ </section></main>;
 }
