@@ -20,7 +20,7 @@ export default function Auth({mode='login'}){
  async function signInWithId(event){
   event.preventDefault();setBusy(true);setError('');
   try{
-   const {data,error:e}=await supabase.functions.invoke('xedruo-id-login',{body:{xedruo_id:xedruoId.trim().toUpperCase(),password}});
+   const {data,error:e}=await supabase.functions.invoke('xedruo-id-login',{body:{xedruo_id:xedruoId.trim().toUpperCase(),password,company_slug:'spacetruo'}});
    if(e)throw new Error(e.message||'Xedruo ID sign-in failed.');
    if(!data?.access_token||!data?.refresh_token)throw new Error(data?.error||'Xedruo ID or password is incorrect.');
    const {error:sessionError}=await supabase.auth.setSession({access_token:data.access_token,refresh_token:data.refresh_token});
