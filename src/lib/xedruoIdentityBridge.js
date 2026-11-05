@@ -1,4 +1,22 @@
-/** Central Xedruo Identity bridge. Requires an authenticated central Supabase client. SMS OTP is intentionally deferred. */
+/** Shared Xedruo Identity bridge. Company pages own their UI and return paths. SMS OTP is intentionally deferred. */
+export async function signInWithXedruoId({supabase,xedruoId,password,companySlug}) {
+  if (!supabase?.functions?.invoke || !supabase?.auth?.setSession) throw new Error("Xedruo Identity client is not configured.");
+  const id=String(xedruoId||"").trim().toUpperCase();
+  if (!/^[A-Z]{2}-?\d{10}$/.test(id) || !password) throw new Error("Enter your Xedruo ID and password.");
+  const {data,error}=await supabase.functions.invoke("xedruo-id-login",{body:{xedruo_id:id,password,company_slug:companySlug}});
+  if(error) throw new Error(error.message||"Xedruo ID sign-in failed.");
+  if(!data?.access_token||!data?.refresh_token||data?.company!==companySlug) throw new Error(data?.error||"The company authentication response was invalid.");
+  const {error:sessionError}=await supabase.auth.setSession({access_token:data.access_token,refresh_token:data.refresh_token});
+  if(sessionError) throw sessionError;
+  return data.user||null;
+}
+export async function signInWithGoogle({supabase,companyOrigin,returnPath}) {
+  const origin=String(companyOrigin||"").replace(/\/$/,"");
+  const path=String(returnPath||"/").startsWith("/")?String(returnPath||"/"):"/";
+  if(!origin) throw new Error("Company return address is missing.");
+  const {error}=await supabase.auth.signInWithOAuth({provider:"google",options:{redirectTo:origin+path,queryParams:{prompt:"select_account"}}});
+  if(error) throw error;
+}
 export async function completeXedruoIdentity({supabase,companySlug,countryCode,phoneE164,callingCode,displayName}) {
   if (!supabase?.auth?.getUser || !supabase?.rpc) throw new Error("A central Xedruo Supabase client is required.");
   const slug=String(companySlug||"").trim().toLowerCase(), country=String(countryCode||"").trim().toUpperCase();
